@@ -1,75 +1,65 @@
-#Requires AutoHotkey v2.0
+#Requires Aut
 
-; 対象のアプリケーション
-Global TargetWindow := "ahk_exe alacritty.exe"
+; Alacritty target position (adjust to your environment's coordinates)
+Global AlacrittyTargetX := 1970
+Global AlacrittyTargetY := 30
 
-; TargetWindowのターゲット位置 (あなたの環境の座標に修正)
-Global TargetWindowCondX := 1970
-Global TargetWindowCondY := 30
+; Windows API constants
+Global GW_HWNDNEXT := 2  ; Retrieves the next window in the Z-order (below)
+Global GW_HWNDPREV := 3  ; (Not used in this script)
 
-; Windows APIの定数
-Global GW_HWNDNEXT := 2  ; Zオーダーにおける次のウィンドウ (すぐ下) を取得
+; ==== Timer Routine to Keep Window at Bottom ====
+; Check the operation and adjust to the optimal interval (e.g., 100ms, 200ms, 500ms, 1000ms)
+SetTimer KeepAlacrittyBelow, 500 ; Set to 500ms as an example
 
-;処理の頻度
-Global Frequency := 50
-
-; ==== 最背面に保つタイマールーチン ====
-SetTimer KeepTargetWindowBelow, Frequency 
-Return
-
-KeepTargetWindowBelow() {
+KeepAlacrittyBelow() {
     try {
         FoundHwnd := 0
-        for hwnd in WinGetList(TargetWindow) {
+        for hwnd in WinGetList("ahk_exe alacritty.exe") {
             WinGetPos(&x, &y, &width, &height, hwnd)
-            if (x == TargetWindowCondX && y == TargetWindowCondY) {
+            if (x == AlacrittyTargetX && y == AlacrittyTargetY) {
                 FoundHwnd := hwnd
                 break
             }
         }
 
         if (!FoundHwnd) { 
-            ;OUtputDebug("KeepTargetWindowBelow: [INFO] TargetWindowウィンドウが指定位置に見つかりません。WinMoveBottomをスキップします。")
-            Return
-        } else {
-            ;OUtputDebug("KeepTargetWindowBelow: [INFO] TargetWindowウィンドウ (HWND: " . FoundHwnd . ") がターゲット位置に見つかりました。")
+            Return ; Do nothing if window is not found
         }
         
         if (!IsWindowTrulyAtBottom(FoundHwnd)) {
-            ;OUtputDebug("KeepTargetWindowBelow: [ACTION] TargetWindowは最背面ではありません。WinMoveBottom()を呼び出します。")
             WinMoveBottom(FoundHwnd)
         } else {
-            ;OUtputDebug("KeepTargetWindowBelow: [STATUS] TargetWindowは既に最背面と判定されました。WinMoveBottom()はスキップ。")
-            ;OUtputDebug("KeepTargetWindowBelow: [DEBUG] IsWindowTrulyAtBottom()がTrueを返しました。TargetWindowは本当に最背面ですか？")
+            ; Do nothing (as it's already determined to be at the bottom)
         }
 
     } catch as e {
-        ;OUtputDebug("ERROR: タイマールーチンでエラー発生 (Catchブロックから): " . e.Message)
+        ; Log error only (for integration into other scripts)
+        OutputDebug("ERROR: An error occurred in KeepAlacrittyBelow: " . e.Message)
     }
 }
 
-; ==== ヘルパー関数: 次の「意味のある」ウィンドウ (非IME/非デスクトップ) を取得する ====
-; 与えられたウィンドウのすぐ下からZオーダーをたどり、
-; IMEウィンドウやデスクトップ関連のウィンドウをスキップして、
-; 最初に見つかった「通常のアプリケーションウィンドウ」のHWNDを返します。
-; もしそのようなウィンドウが見つからなければ 0 を返します。
+; ==== Helper Function: GetNextSignificantWindow (non-IME/non-desktop) ====
+; Traverses the Z-order downwards from the given window,
+; skipping IME and desktop-related windows,
+; and returns the HWND of the first encountered "normal application window".
+; Returns 0 if no such window is found.
 GetNextSignificantWindow(startHwnd) {
     Local currentHwnd := startHwnd
 
-    ; スキップすべきウィンドウクラスのリスト (小文字)
-    SkipClassesLowerCase := ["ime", "msctfime ui", "progman", "workerw", "shelldll_defview", "#32769", "shell_traywnd"] 
-    ;OUtputDebug("--- GetNextSignificantWindow START (from: " . startHwnd . ") ---")
+    ; List of window classes to skip (lowercase)
+    ; These windows are considered "transparent" for Z-order determination.
+    Local SkipClassesLowerCase := ["ime", "msctfime ui", "progman", "workerw", "shelldll_defview", "#32769", "shell_traywnd"] 
 
     Loop {
-        currentHwnd := DllCall("GetWindow", "Ptr", currentHwnd, "UInt", GW_HWNDNEXT, "Ptr") ; 1つ下のウィンドウを取得
+        currentHwnd := DllCall("GetWindow", "Ptr", currentHwnd, "UInt", GW_HWNDNEXT, "Ptr") ; Get the window one level below
 
-        if (currentHwnd == 0) { ; もうこれ以上ウィンドウがない
-            ;OUtputDebug("GetNextSignificantWindow Debug: END (Reached 0). Returning 0.")
+        if (currentHwnd == 0) { 
             Return 0
         }
 
         Local winClass := WinGetClass(currentHwnd)
-        Local winTitle := WinGetTitle(currentHwnd)
+        Local winTitle := WinGetTitle(currentHwnd) 
         Local trimmedWinClass := StrLower(Trim(winClass))
         
         Local isSkipped := false
@@ -80,36 +70,27 @@ GetNextSignificantWindow(startHwnd) {
             }
         }
 
-        ;OUtputDebug("GetNextSignificantWindow Debug:   Checking HWND " . currentHwnd 
-        ;    . ", Class: '" . winClass . "' (Trimmed Lower: '" . trimmedWinClass . "')"
-        ;    . ", Title: '" . winTitle . "'"
-        ;    . ", Is Skipped? " . (isSkipped ? "True" : "False")
-        ;)
-
         if (isSkipped) {
-            ;OUtputDebug("GetNextSignificantWindow Debug:   --> SKIPPING. Continue searching.")
-            Continue ; このウィンドウはスキップすべきなので、次のループでさらに下のウィンドウを探す
+            Continue ; This window should be skipped, so continue searching further down
         }
         
-        ;OUtputDebug("GetNextSignificantWindow Debug:   --> FOUND significant window. Returning " . currentHwnd)
-        Return currentHwnd ; ここまで来たということは、スキップすべきでない（通常のアプリ）ウィンドウが見つかった
+        Return currentHwnd ; A non-skipped (normal application) window was found
     }
 }
 
 
-; ==== ウィンドウがZオーダーの「最下層」にあるかを判定する関数 ====
-; (この関数の中身はGetNextSignificantWindow の修正に伴い変更なし)
+; ==== Function: Determines if the window is at the "bottommost" of the Z-order ====
+; Checks if the window directly below the target window is desktop-related.
 IsWindowTrulyAtBottom(hwnd) {
     if (!WinExist(hwnd)) {
-        ;OUtputDebug("IsWindowTrulyAtBottom: HWND " . hwnd . " does not exist.")
-        Return true ; ウィンドウが存在しない場合は、既に最背面と見なす
+        Return true ; If the window does not exist, consider it already at the bottom
     }
 
     HwndNextSignificant := GetNextSignificantWindow(hwnd)
 
     if (HwndNextSignificant == 0) {
-        Return true ; 下にアプリウィンドウがないので、最背面である
+        Return true ; If no application window is found below it, it's at the bottom
     }
     
-    Return false ; 下にアプリウィンドウがある。最背面ではない。
-}
+    Return false ; An application window is found below it, so it's not at the bottom
+}oHotkey v2.0
